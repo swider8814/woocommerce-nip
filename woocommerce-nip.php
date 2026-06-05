@@ -1,0 +1,294 @@
+<?php
+/**
+ * Plugin Name: WooCommerce NIP Field
+ * Author: Daniel Świderski
+ * Author URI: https://8814.pl
+ * Description: Adds an optional Polish NIP field to WooCommerce classic checkout.
+ * Version: 1.0.0
+ * License: GPL-2.0-or-later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
+ * Text Domain: woocommerce-nip-field
+ * Requires Plugins: woocommerce
+ * WC requires at least: 3.0
+ * WC tested up to: 9.0
+ *
+ * @package WooCommerce_NIP_Field
+ */
+
+defined( 'ABSPATH' ) || exit;
+
+add_action( 'before_woocommerce_init', 'woocommerce_nip_declare_compatibility' );
+add_action( 'plugins_loaded', 'woocommerce_nip_field_init' );
+
+/**
+ * Declares compatibility with WooCommerce feature flags.
+ */
+function woocommerce_nip_declare_compatibility() {
+	if ( class_exists( \Automattic\WooCommerce\Utilities\FeaturesUtil::class ) ) {
+		\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', __FILE__, true );
+	}
+}
+
+/**
+ * Initializes the plugin after WooCommerce is available.
+ */
+function woocommerce_nip_field_init() {
+	if ( ! class_exists( 'WooCommerce' ) ) {
+		return;
+	}
+
+	add_filter( 'woocommerce_checkout_fields', 'woocommerce_nip_add_checkout_field' );
+	add_action( 'woocommerce_after_checkout_validation', 'woocommerce_nip_validate_checkout_field', 10, 2 );
+	add_action( 'woocommerce_checkout_create_order', 'woocommerce_nip_save_order_meta', 10, 2 );
+	add_action( 'woocommerce_admin_order_data_after_billing_address', 'woocommerce_nip_display_admin_order_meta' );
+	add_filter( 'woocommerce_email_order_meta_fields', 'woocommerce_nip_add_email_order_meta', 10, 3 );
+	add_action( 'wp_enqueue_scripts', 'woocommerce_nip_enqueue_checkout_script' );
+}
+
+/**
+ * Adds the NIP field after billing company.
+ *
+ * @param array $fields Checkout fields.
+ * @return array
+ */
+function woocommerce_nip_add_checkout_field( $fields ) {
+	$nip_field = array(
+		'type'              => 'text',
+		'label'             => __( 'NIP', 'woocommerce-nip-field' ),
+		'required'          => false,
+		'priority'          => 31,
+		'class'             => array( 'form-row-wide' ),
+		'input_class'       => array( 'input-text' ),
+		'custom_attributes' => array(
+			'inputmode' => 'numeric',
+			'maxlength' => '10',
+			'pattern'   => '[0-9]*',
+		),
+	);
+
+	if ( ! isset( $fields['billing'] ) || ! is_array( $fields['billing'] ) ) {
+		return $fields;
+	}
+
+	$billing_fields = array();
+
+	foreach ( $fields['billing'] as $key => $field ) {
+		$billing_fields[ $key ] = $field;
+
+		if ( 'billing_company' === $key ) {
+			$billing_fields['billing_nip'] = $nip_field;
+		}
+	}
+
+	if ( ! isset( $billing_fields['billing_nip'] ) ) {
+		$billing_fields['billing_nip'] = $nip_field;
+	}
+
+	$fields['billing'] = $billing_fields;
+
+	return $fields;
+}
+
+/**
+ * Validates NIP through WooCommerce's native checkout field validation flow.
+ *
+ * @param array    $data   Posted checkout data.
+ * @param WP_Error $errors Validation errors.
+ */
+function woocommerce_nip_validate_checkout_field( $data, $errors ) {
+	$nip = isset( $data['billing_nip'] ) ? trim( (string) $data['billing_nip'] ) : '';
+
+	if ( '' === $nip ) {
+		return;
+	}
+
+	$company = isset( $data['billing_company'] ) ? trim( (string) $data['billing_company'] ) : '';
+
+	if ( '' === $company ) {
+		$errors->add(
+			'billing_company_required_with_nip',
+			sprintf(
+				/* translators: %s: checkout field label. */
+				__( '<a href="#billing_company">%s jest wymagana przy podaniu NIP.</a>', 'woocommerce-nip-field' ),
+				'<strong>' . esc_html__( 'Nazwa firmy', 'woocommerce-nip-field' ) . '</strong>'
+			),
+			array( 'id' => 'billing_company' )
+		);
+	}
+
+	if ( ! woocommerce_nip_is_valid( $nip ) ) {
+		$errors->add(
+			'billing_nip_validation',
+			sprintf(
+				/* translators: %s: checkout field label. */
+				__( '<a href="#billing_nip">%s nie jest prawidłowym numerem.</a>', 'woocommerce-nip-field' ),
+				'<strong>' . esc_html__( 'NIP', 'woocommerce-nip-field' ) . '</strong>'
+			),
+			array( 'id' => 'billing_nip' )
+		);
+	}
+
+	woocommerce_nip_sort_checkout_errors( $errors );
+}
+
+/**
+ * Sorts checkout errors by field order so the NIP notice appears near its field.
+ *
+ * @param WP_Error $errors Validation errors.
+ */
+function woocommerce_nip_sort_checkout_errors( $errors ) {
+	if ( ! isset( $errors->errors['billing_nip_validation'] ) && ! isset( $errors->errors['billing_company_required_with_nip'] ) ) {
+		return;
+	}
+
+	$field_order = woocommerce_nip_get_checkout_field_order();
+
+	if ( empty( $field_order ) ) {
+		return;
+	}
+
+	$indexed_errors = array();
+
+	foreach ( $errors->errors as $code => $messages ) {
+		$data  = $errors->get_error_data( $code );
+		$id    = is_array( $data ) && isset( $data['id'] ) ? $data['id'] : '';
+		$order = isset( $field_order[ $id ] ) ? $field_order[ $id ] : PHP_INT_MAX;
+
+		$indexed_errors[ $code ] = array(
+			'messages' => $messages,
+			'data'     => $data,
+			'order'    => $order,
+		);
+	}
+
+	uasort(
+		$indexed_errors,
+		static function ( $a, $b ) {
+			return $a['order'] <=> $b['order'];
+		}
+	);
+
+	$errors->errors     = wp_list_pluck( $indexed_errors, 'messages' );
+	$errors->error_data = wp_list_pluck( $indexed_errors, 'data' );
+}
+
+/**
+ * Returns checkout field ids sorted by WooCommerce priority.
+ *
+ * @return array
+ */
+function woocommerce_nip_get_checkout_field_order() {
+	if ( ! function_exists( 'WC' ) || ! WC()->checkout() ) {
+		return array();
+	}
+
+	$fields = WC()->checkout()->get_checkout_fields();
+	$order  = array();
+	$index  = 0;
+
+	foreach ( $fields as $fieldset ) {
+		uasort(
+			$fieldset,
+			static function ( $a, $b ) {
+				return ( $a['priority'] ?? 0 ) <=> ( $b['priority'] ?? 0 );
+			}
+		);
+
+		foreach ( $fieldset as $key => $field ) {
+			$order[ $key ] = $index++;
+		}
+	}
+
+	return $order;
+}
+
+/**
+ * Checks whether a value is a valid Polish NIP.
+ *
+ * @param string $nip NIP value.
+ * @return bool
+ */
+function woocommerce_nip_is_valid( $nip ) {
+	if ( ! preg_match( '/^\d{10}$/', $nip ) ) {
+		return false;
+	}
+
+	$weights  = array( 6, 5, 7, 2, 3, 4, 5, 6, 7 );
+	$checksum = 0;
+
+	for ( $i = 0; $i < 9; $i++ ) {
+		$checksum += (int) $nip[ $i ] * $weights[ $i ];
+	}
+
+	return ( $checksum % 11 ) === (int) $nip[9];
+}
+
+/**
+ * Saves NIP in order meta.
+ *
+ * @param WC_Order $order Order object.
+ * @param array    $data  Posted checkout data.
+ */
+function woocommerce_nip_save_order_meta( $order, $data ) {
+	if ( empty( $data['billing_nip'] ) ) {
+		return;
+	}
+
+	$nip = trim( (string) $data['billing_nip'] );
+
+	if ( woocommerce_nip_is_valid( $nip ) ) {
+		$order->update_meta_data( '_billing_nip', $nip );
+	}
+}
+
+/**
+ * Displays NIP in admin order billing data.
+ *
+ * @param WC_Order $order Order object.
+ */
+function woocommerce_nip_display_admin_order_meta( $order ) {
+	$nip = $order->get_meta( '_billing_nip' );
+
+	if ( '' === $nip ) {
+		return;
+	}
+
+	echo '<p><strong>' . esc_html__( 'NIP', 'woocommerce-nip-field' ) . ':</strong> ' . esc_html( $nip ) . '</p>';
+}
+
+/**
+ * Adds NIP to WooCommerce emails.
+ *
+ * @param array    $fields Email meta fields.
+ * @param bool     $sent_to_admin Whether the email is sent to admin.
+ * @param WC_Order $order Order object.
+ * @return array
+ */
+function woocommerce_nip_add_email_order_meta( $fields, $sent_to_admin, $order ) {
+	$nip = $order->get_meta( '_billing_nip' );
+
+	if ( '' !== $nip ) {
+		$fields['billing_nip'] = array(
+			'label' => __( 'NIP', 'woocommerce-nip-field' ),
+			'value' => $nip,
+		);
+	}
+
+	return $fields;
+}
+
+/**
+ * Limits NIP input to digits and 10 characters on checkout only.
+ */
+function woocommerce_nip_enqueue_checkout_script() {
+	if ( ! function_exists( 'is_checkout' ) || ! is_checkout() || is_order_received_page() ) {
+		return;
+	}
+
+	wp_register_script( 'woocommerce-nip-field', '', array(), '1.0.0', true );
+	wp_enqueue_script( 'woocommerce-nip-field' );
+	wp_add_inline_script(
+		'woocommerce-nip-field',
+		"(function(){var field=document.getElementById('billing_nip');if(!field){return;}function clearError(id){var wrap=document.getElementById(id+'_field');if(wrap){wrap.classList.remove('woocommerce-invalid','woocommerce-invalid-required-field');}}function markError(id){var wrap=document.getElementById(id+'_field');if(document.querySelector('.woocommerce-error [data-id=\"'+id+'\"],.woocommerce-error li[data-id=\"'+id+'\"]')&&wrap){wrap.classList.remove('woocommerce-validated');wrap.classList.add('woocommerce-invalid','woocommerce-invalid-required-field');}}field.addEventListener('input',function(){this.value=this.value.replace(/\\D/g,'').slice(0,10);clearError('billing_nip');});var company=document.getElementById('billing_company');if(company){company.addEventListener('input',function(){clearError('billing_company');});}if(window.jQuery){window.jQuery(document.body).on('checkout_error updated_checkout',function(){markError('billing_nip');markError('billing_company');});}}());"
+	);
+}
