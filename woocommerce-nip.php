@@ -41,6 +41,7 @@ function woocommerce_nip_field_init() {
 	add_filter( 'woocommerce_checkout_get_value', 'woocommerce_nip_get_checkout_field_value', 10, 2 );
 	add_filter( 'woocommerce_billing_fields', 'woocommerce_nip_add_billing_address_field' );
 	add_filter( 'woocommerce_my_account_my_address_formatted_address', 'woocommerce_nip_add_my_account_address_nip', 10, 3 );
+	add_filter( 'woocommerce_order_formatted_billing_address', 'woocommerce_nip_add_order_billing_address_nip', 10, 2 );
 	add_action( 'woocommerce_after_checkout_validation', 'woocommerce_nip_validate_checkout_field', 10, 2 );
 	add_action( 'woocommerce_after_save_address_validation', 'woocommerce_nip_validate_billing_address_field', 10, 3 );
 	add_action( 'woocommerce_checkout_create_order', 'woocommerce_nip_save_order_meta', 10, 2 );
@@ -161,6 +162,26 @@ function woocommerce_nip_add_my_account_address_nip( $address, $customer_id, $ad
 	}
 
 	$nip = trim( (string) get_user_meta( $customer_id, 'billing_nip', true ) );
+
+	if ( '' === $nip ) {
+		return $address;
+	}
+
+	$nip_line           = sprintf( __( 'NIP: %s', 'woocommerce-nip-field' ), $nip );
+	$address['company'] = empty( $address['company'] ) ? $nip_line : $address['company'] . "\n" . $nip_line;
+
+	return $address;
+}
+
+/**
+ * Adds NIP to the formatted billing address displayed for orders.
+ *
+ * @param array    $address Formatted address data.
+ * @param WC_Order $order   Order object.
+ * @return array
+ */
+function woocommerce_nip_add_order_billing_address_nip( $address, $order ) {
+	$nip = $order->get_meta( '_billing_nip' );
 
 	if ( '' === $nip ) {
 		return $address;
