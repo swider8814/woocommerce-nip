@@ -38,10 +38,13 @@ function woocommerce_nip_field_init() {
 	}
 
 	add_filter( 'woocommerce_checkout_fields', 'woocommerce_nip_add_checkout_field' );
+	add_filter( 'woocommerce_checkout_get_value', 'woocommerce_nip_get_checkout_field_value', 10, 2 );
 	add_filter( 'woocommerce_billing_fields', 'woocommerce_nip_add_billing_address_field' );
+	add_filter( 'woocommerce_my_account_my_address_formatted_address', 'woocommerce_nip_add_my_account_address_nip', 10, 3 );
 	add_action( 'woocommerce_after_checkout_validation', 'woocommerce_nip_validate_checkout_field', 10, 2 );
 	add_action( 'woocommerce_after_save_address_validation', 'woocommerce_nip_validate_billing_address_field', 10, 3 );
 	add_action( 'woocommerce_checkout_create_order', 'woocommerce_nip_save_order_meta', 10, 2 );
+	add_action( 'woocommerce_checkout_update_user_meta', 'woocommerce_nip_save_customer_billing_nip', 10, 2 );
 	add_action( 'woocommerce_admin_order_data_after_billing_address', 'woocommerce_nip_display_admin_order_meta' );
 	add_filter( 'woocommerce_email_order_meta_fields', 'woocommerce_nip_add_email_order_meta', 10, 3 );
 	add_action( 'wp_enqueue_scripts', 'woocommerce_nip_enqueue_checkout_script' );
@@ -92,6 +95,21 @@ function woocommerce_nip_add_checkout_field( $fields ) {
 }
 
 /**
+ * Loads saved NIP into the checkout field for logged-in customers.
+ *
+ * @param mixed  $value Checkout field value.
+ * @param string $input Checkout field key.
+ * @return mixed
+ */
+function woocommerce_nip_get_checkout_field_value( $value, $input ) {
+	if ( 'billing_nip' !== $input || '' !== (string) $value || ! is_user_logged_in() ) {
+		return $value;
+	}
+
+	return get_user_meta( get_current_user_id(), 'billing_nip', true );
+}
+
+/**
  * Adds the NIP field to customer billing address forms.
  *
  * @param array $fields Billing fields.
@@ -130,6 +148,31 @@ function woocommerce_nip_add_billing_address_field( $fields ) {
 }
 
 /**
+ * Adds NIP to the formatted billing address displayed in My Account.
+ *
+ * @param array  $address      Formatted address data.
+ * @param int    $customer_id  Customer ID.
+ * @param string $address_type Address type.
+ * @return array
+ */
+function woocommerce_nip_add_my_account_address_nip( $address, $customer_id, $address_type ) {
+	if ( 'billing' !== $address_type ) {
+		return $address;
+	}
+
+	$nip = trim( (string) get_user_meta( $customer_id, 'billing_nip', true ) );
+
+	if ( '' === $nip ) {
+		return $address;
+	}
+
+	$nip_line           = sprintf( __( 'NIP: %s', 'woocommerce-nip-field' ), $nip );
+	$address['company'] = empty( $address['company'] ) ? $nip_line : $address['company'] . "\n" . $nip_line;
+
+	return $address;
+}
+
+/**
  * Validates NIP through WooCommerce's native checkout field validation flow.
  *
  * @param array    $data   Posted checkout data.
@@ -143,8 +186,9 @@ function woocommerce_nip_validate_checkout_field( $data, $errors ) {
 	}
 
 	$company = isset( $data['billing_company'] ) ? trim( (string) $data['billing_company'] ) : '';
+	$errors_found = woocommerce_nip_get_validation_errors( $nip, $company );
 
-	if ( '' === $company ) {
+	if ( in_array( 'company_required', $errors_found, true ) ) {
 		$errors->add(
 			'billing_company_required_with_nip',
 			sprintf(
@@ -156,7 +200,7 @@ function woocommerce_nip_validate_checkout_field( $data, $errors ) {
 		);
 	}
 
-	if ( ! woocommerce_nip_is_valid( $nip ) ) {
+	if ( in_array( 'invalid_nip', $errors_found, true ) ) {
 		$errors->add(
 			'billing_nip_validation',
 			sprintf(
@@ -168,7 +212,34 @@ function woocommerce_nip_validate_checkout_field( $data, $errors ) {
 		);
 	}
 
-	woocommerce_nip_sort_checkout_errors( $errors );
+	if ( ! empty( $errors_found ) ) {
+		woocommerce_nip_sort_checkout_errors( $errors );
+	}
+}
+
+/**
+ * Returns NIP validation errors shared by checkout and My Account billing address.
+ *
+ * @param string $nip     NIP value.
+ * @param string $company Billing company value.
+ * @return array
+ */
+function woocommerce_nip_get_validation_errors( $nip, $company ) {
+	$errors = array();
+
+	if ( '' === $nip ) {
+		return $errors;
+	}
+
+	if ( '' === $company ) {
+		$errors[] = 'company_required';
+	}
+
+	if ( ! woocommerce_nip_is_valid( $nip ) ) {
+		$errors[] = 'invalid_nip';
+	}
+
+	return $errors;
 }
 
 /**
@@ -190,12 +261,13 @@ function woocommerce_nip_validate_billing_address_field( $user_id, $load_address
 	}
 
 	$company = isset( $_POST['billing_company'] ) ? trim( wc_clean( wp_unslash( $_POST['billing_company'] ) ) ) : '';
+	$errors  = woocommerce_nip_get_validation_errors( $nip, $company );
 
-	if ( '' === $company ) {
+	if ( in_array( 'company_required', $errors, true ) ) {
 		wc_add_notice( __( 'Nazwa firmy jest wymagana przy podaniu NIP.', 'woocommerce-nip-field' ), 'error' );
 	}
 
-	if ( ! woocommerce_nip_is_valid( $nip ) ) {
+	if ( in_array( 'invalid_nip', $errors, true ) ) {
 		wc_add_notice( __( 'NIP nie jest prawidłowym numerem.', 'woocommerce-nip-field' ), 'error' );
 	}
 }
@@ -315,6 +387,29 @@ function woocommerce_nip_save_order_meta( $order, $data ) {
 }
 
 /**
+ * Saves NIP to the customer's billing profile after checkout.
+ *
+ * @param int   $customer_id Customer ID.
+ * @param array $data        Posted checkout data.
+ */
+function woocommerce_nip_save_customer_billing_nip( $customer_id, $data ) {
+	if ( ! $customer_id || ! is_array( $data ) || ! isset( $data['billing_nip'] ) ) {
+		return;
+	}
+
+	$nip = trim( (string) $data['billing_nip'] );
+
+	if ( '' === $nip ) {
+		delete_user_meta( $customer_id, 'billing_nip' );
+		return;
+	}
+
+	if ( woocommerce_nip_is_valid( $nip ) ) {
+		update_user_meta( $customer_id, 'billing_nip', $nip );
+	}
+}
+
+/**
  * Displays NIP in admin order billing data.
  *
  * @param WC_Order $order Order object.
@@ -351,7 +446,7 @@ function woocommerce_nip_add_email_order_meta( $fields, $sent_to_admin, $order )
 }
 
 /**
- * Limits NIP input to digits and 10 characters on checkout only.
+ * Adds checkout-only helpers for NIP and prefilled billing fields.
  */
 function woocommerce_nip_enqueue_checkout_script() {
 	if ( ! function_exists( 'is_checkout' ) || ! is_checkout() || is_order_received_page() ) {
@@ -363,5 +458,9 @@ function woocommerce_nip_enqueue_checkout_script() {
 	wp_add_inline_script(
 		'woocommerce-nip-field',
 		"(function(){var field=document.getElementById('billing_nip');if(!field){return;}function clearError(id){var wrap=document.getElementById(id+'_field');if(wrap){wrap.classList.remove('woocommerce-invalid','woocommerce-invalid-required-field');}}function markError(id){var wrap=document.getElementById(id+'_field');if(document.querySelector('.woocommerce-error [data-id=\"'+id+'\"],.woocommerce-error li[data-id=\"'+id+'\"]')&&wrap){wrap.classList.remove('woocommerce-validated');wrap.classList.add('woocommerce-invalid','woocommerce-invalid-required-field');}}field.addEventListener('input',function(){this.value=this.value.replace(/\\D/g,'').slice(0,10);clearError('billing_nip');});var company=document.getElementById('billing_company');if(company){company.addEventListener('input',function(){clearError('billing_company');});}if(window.jQuery){window.jQuery(document.body).on('checkout_error updated_checkout',function(){markError('billing_nip');markError('billing_company');});}}());"
+	);
+	wp_add_inline_script(
+		'woocommerce-nip-field',
+		"(function(){var saved={};function selector(){return '.woocommerce-checkout [name^=\"billing_\"],.woocommerce-checkout [name^=\"shipping_\"]';}function initialValue(field){if(field.type==='checkbox'||field.type==='radio'||field.type==='hidden'){return '';}if(field.tagName==='SELECT'){var option=field.querySelector('option[selected]');return option?option.value:'';}return field.getAttribute('value')||'';}function remember(){document.querySelectorAll(selector()).forEach(function(field){if(saved[field.name]!==undefined){return;}var value=initialValue(field);if(value){saved[field.name]=value;}});}function restore(){document.querySelectorAll(selector()).forEach(function(field){var value=saved[field.name];if(!value||field.dataset.woocommerceNipTouched==='1'||field.value){return;}field.value=value;field.dispatchEvent(new Event(field.tagName==='SELECT'?'change':'input',{bubbles:true}));});}function markTouched(event){var field=event.target;if(event.isTrusted&&field&&field.name&&(field.name.indexOf('billing_')===0||field.name.indexOf('shipping_')===0)){field.dataset.woocommerceNipTouched='1';}}document.addEventListener('input',markTouched,true);document.addEventListener('change',markTouched,true);remember();restore();setTimeout(restore,50);setTimeout(restore,250);setTimeout(restore,750);if(window.jQuery){window.jQuery(document.body).on('updated_checkout',function(){remember();restore();setTimeout(restore,50);});}}());"
 	);
 }
