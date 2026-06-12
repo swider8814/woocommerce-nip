@@ -4,7 +4,7 @@
  * Author: Daniel Świderski
  * Author URI: https://8814.pl
  * Description: Adds an optional Polish NIP field to WooCommerce classic checkout.
- * Version: 1.0.2
+ * Version: 1.0.3
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: woocommerce-nip-field
@@ -42,12 +42,12 @@ function woocommerce_nip_field_init() {
 	add_filter( 'woocommerce_billing_fields', 'woocommerce_nip_add_billing_address_field' );
 	add_filter( 'woocommerce_my_account_my_address_formatted_address', 'woocommerce_nip_add_my_account_address_nip', 10, 3 );
 	add_filter( 'woocommerce_order_formatted_billing_address', 'woocommerce_nip_add_order_billing_address_nip', 10, 2 );
+	add_filter( 'woocommerce_order_get_formatted_billing_address', 'woocommerce_nip_add_formatted_order_billing_address_nip', 10, 3 );
 	add_action( 'woocommerce_after_checkout_validation', 'woocommerce_nip_validate_checkout_field', 10, 2 );
 	add_action( 'woocommerce_after_save_address_validation', 'woocommerce_nip_validate_billing_address_field', 10, 3 );
 	add_action( 'woocommerce_checkout_create_order', 'woocommerce_nip_save_order_meta', 10, 2 );
 	add_action( 'woocommerce_checkout_update_user_meta', 'woocommerce_nip_save_customer_billing_nip', 10, 2 );
 	add_action( 'woocommerce_admin_order_data_after_billing_address', 'woocommerce_nip_display_admin_order_meta' );
-	add_filter( 'woocommerce_email_order_meta_fields', 'woocommerce_nip_add_email_order_meta', 10, 3 );
 	add_action( 'wp_enqueue_scripts', 'woocommerce_nip_enqueue_checkout_script' );
 }
 
@@ -191,6 +191,26 @@ function woocommerce_nip_add_order_billing_address_nip( $address, $order ) {
 	$address['company'] = empty( $address['company'] ) ? $nip_line : $address['company'] . "\n" . $nip_line;
 
 	return $address;
+}
+
+/**
+ * Adds NIP to the final formatted billing address if it is not already there.
+ *
+ * @param string   $address     Formatted billing address.
+ * @param array    $raw_address Raw billing address data.
+ * @param WC_Order $order       Order object.
+ * @return string
+ */
+function woocommerce_nip_add_formatted_order_billing_address_nip( $address, $raw_address, $order ) {
+	$nip = $order->get_meta( '_billing_nip' );
+
+	if ( '' === $nip || false !== strpos( wp_strip_all_tags( $address ), $nip ) ) {
+		return $address;
+	}
+
+	$nip_line = sprintf( __( 'NIP: %s', 'woocommerce-nip-field' ), $nip );
+
+	return $address ? $address . '<br/>' . esc_html( $nip_line ) : esc_html( $nip_line );
 }
 
 /**
@@ -443,27 +463,6 @@ function woocommerce_nip_display_admin_order_meta( $order ) {
 	}
 
 	echo '<p><strong>' . esc_html__( 'NIP', 'woocommerce-nip-field' ) . ':</strong> ' . esc_html( $nip ) . '</p>';
-}
-
-/**
- * Adds NIP to WooCommerce emails.
- *
- * @param array    $fields Email meta fields.
- * @param bool     $sent_to_admin Whether the email is sent to admin.
- * @param WC_Order $order Order object.
- * @return array
- */
-function woocommerce_nip_add_email_order_meta( $fields, $sent_to_admin, $order ) {
-	$nip = $order->get_meta( '_billing_nip' );
-
-	if ( '' !== $nip ) {
-		$fields['billing_nip'] = array(
-			'label' => __( 'NIP', 'woocommerce-nip-field' ),
-			'value' => $nip,
-		);
-	}
-
-	return $fields;
 }
 
 /**
