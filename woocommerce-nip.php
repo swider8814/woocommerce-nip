@@ -4,7 +4,7 @@
  * Author: Daniel Świderski
  * Author URI: https://8814.pl
  * Description: Adds an optional Polish NIP field to WooCommerce classic checkout.
- * Version: 1.0.1
+ * Version: 1.0.2
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: woocommerce-nip-field
@@ -279,6 +279,10 @@ function woocommerce_nip_get_checkout_field_order() {
  */
 function woocommerce_nip_is_valid( $nip ) {
 	if ( ! preg_match( '/^\d{10}$/', $nip ) ) {
+		return false;
+	}
+
+	if ( preg_match( '/^(\d)\1{9}$/', $nip ) ) {
 		return false;
 	}
 
