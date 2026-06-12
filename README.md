@@ -1,19 +1,24 @@
 # WooCommerce NIP Field
 
-Lekka wtyczka WordPress/WooCommerce dodająca opcjonalne pole NIP do klasycznego checkoutu WooCommerce.
+Lekka wtyczka WordPress/WooCommerce dodająca opcjonalne pole NIP do danych rozliczeniowych klienta i klasycznego checkoutu WooCommerce.
 
 ## Zakres
 
-Wtyczka obsługuje wyłącznie polski NIP w klasycznym checkoutcie WooCommerce. Nie integruje się z GUS/REGON, nie pobiera danych firmy automatycznie i nie dodaje konfiguracji w panelu administracyjnym.
+Wtyczka obsługuje wyłącznie polski NIP w danych rozliczeniowych WooCommerce i klasycznym checkoutcie. Nie integruje się z GUS/REGON, nie pobiera danych firmy automatycznie i nie dodaje konfiguracji w panelu administracyjnym.
 
 ## Funkcje
 
 - Dodaje pole `billing_nip` w danych rozliczeniowych.
 - Pole NIP jest opcjonalne.
 - Jeśli NIP jest wpisany, wymagana jest też nazwa firmy.
-- Waliduje polski NIP: dokładnie 10 cyfr i poprawna suma kontrolna.
+- Waliduje polski NIP: dokładnie 10 cyfr, poprawna suma kontrolna i brak wartości placeholderowych typu `1111111111`.
+- Dodaje NIP do edycji adresu rozliczeniowego w panelu klienta.
+- Podpowiada zapisany NIP w checkoutcie dla zalogowanego klienta.
+- Zapisuje NIP w profilu klienta po checkoutcie.
 - Zapisuje NIP w meta zamówienia jako `_billing_nip`.
 - Pokazuje NIP w szczegółach zamówienia w panelu WooCommerce.
+- Pokazuje NIP w adresie rozliczeniowym zamówienia, np. na `order-received` i w szczegółach zamówienia w koncie klienta.
+- Pokazuje NIP w podglądzie adresu rozliczeniowego w koncie klienta.
 - Dodaje NIP do maili WooCommerce.
 - Deklaruje zgodność z WooCommerce HPOS.
 - Ładuje minimalny JavaScript tylko na stronie checkout.
@@ -27,7 +32,7 @@ Wtyczka obsługuje wyłącznie polski NIP w klasycznym checkoutcie WooCommerce. 
 
 ## Pliki
 
-- `woocommerce-nip.php` - cały kod wtyczki: rejestracja hooków, pole checkoutu, walidacja, zapis meta, wyświetlanie w adminie i mailach.
+- `woocommerce-nip.php` - cały kod wtyczki: rejestracja hooków, pola rozliczeniowe, walidacja, zapis meta, wyświetlanie w adresach, adminie i mailach.
 - `README.md` - dokumentacja projektu.
 - `LICENSE` - licencja GPL-2.0-or-later.
 - `.gitignore` - lokalne ignorowane pliki.
@@ -51,6 +56,14 @@ Puste pole NIP nie blokuje zamówienia. Jeśli klient wpisze NIP:
 
 Błędy walidacji są przypisane do pól `billing_nip` i `billing_company`, aby WooCommerce mógł wskazać klientowi właściwe miejsce formularza.
 
+Dla zalogowanego klienta checkout podpowiada NIP zapisany wcześniej w `billing_nip`. Skrypt checkoutu ogranicza NIP do cyfr i 10 znaków oraz przywraca zapisane wartości pól rozliczeniowych, jeśli zewnętrzny skrypt motywu wyczyści je po załadowaniu strony.
+
+## Konto klienta
+
+Pole NIP jest dodawane do edycji adresu rozliczeniowego w „Moje konto”. Przy zapisie adresu używana jest ta sama walidacja NIP i firmy co w checkoutcie.
+
+Zapisany NIP jest widoczny w podglądzie adresu rozliczeniowego w koncie klienta.
+
 ## Dane zamówienia
 
 Po poprawnym złożeniu zamówienia NIP jest zapisywany w meta zamówienia:
@@ -62,6 +75,8 @@ _billing_nip
 Wartość jest widoczna:
 
 - w szczegółach zamówienia w panelu WooCommerce,
+- w adresie rozliczeniowym zamówienia na stronie `order-received`,
+- w adresie rozliczeniowym zamówienia w koncie klienta,
 - w polach meta maili WooCommerce.
 
 ## Hooki i funkcje
@@ -71,8 +86,14 @@ Wtyczka rejestruje się po `plugins_loaded`, ale kończy działanie, jeśli klas
 Główne punkty integracji:
 
 - `woocommerce_checkout_fields` - dodanie pola NIP.
+- `woocommerce_checkout_get_value` - wczytanie zapisanego NIP do checkoutu.
+- `woocommerce_billing_fields` - dodanie pola NIP do formularza adresu rozliczeniowego klienta.
+- `woocommerce_my_account_my_address_formatted_address` - pokazanie NIP w podglądzie adresu rozliczeniowego klienta.
+- `woocommerce_order_formatted_billing_address` - pokazanie NIP w adresie rozliczeniowym zamówienia.
 - `woocommerce_after_checkout_validation` - walidacja NIP i firmy.
+- `woocommerce_after_save_address_validation` - walidacja NIP przy zapisie adresu rozliczeniowego w koncie.
 - `woocommerce_checkout_create_order` - zapis `_billing_nip`.
+- `woocommerce_checkout_update_user_meta` - zapis `billing_nip` w profilu klienta po checkoutcie.
 - `woocommerce_admin_order_data_after_billing_address` - wyświetlanie NIP w adminie.
 - `woocommerce_email_order_meta_fields` - dodanie NIP do maili.
 - `wp_enqueue_scripts` - inline JS tylko na checkoutcie.
@@ -81,10 +102,17 @@ Główne punkty integracji:
 Najważniejsze funkcje:
 
 - `woocommerce_nip_add_checkout_field()` - buduje i wstawia pole `billing_nip`.
+- `woocommerce_nip_get_checkout_field_value()` - podpowiada zapisany NIP w checkoutcie.
+- `woocommerce_nip_add_billing_address_field()` - dodaje NIP do formularza adresu rozliczeniowego.
+- `woocommerce_nip_add_my_account_address_nip()` - pokazuje NIP w podglądzie adresu rozliczeniowego klienta.
+- `woocommerce_nip_add_order_billing_address_nip()` - pokazuje NIP w adresie rozliczeniowym zamówienia.
 - `woocommerce_nip_validate_checkout_field()` - waliduje relację NIP/firma.
+- `woocommerce_nip_get_validation_errors()` - współdzieli reguły walidacji dla checkoutu i konta klienta.
+- `woocommerce_nip_validate_billing_address_field()` - waliduje NIP przy zapisie adresu rozliczeniowego.
 - `woocommerce_nip_is_valid()` - sprawdza format i sumę kontrolną polskiego NIP.
 - `woocommerce_nip_save_order_meta()` - zapisuje poprawny NIP w meta zamówienia.
-- `woocommerce_nip_enqueue_checkout_script()` - ogranicza wpisywanie do cyfr i 10 znaków.
+- `woocommerce_nip_save_customer_billing_nip()` - zapisuje poprawny NIP w profilu klienta.
+- `woocommerce_nip_enqueue_checkout_script()` - ogranicza wpisywanie NIP do cyfr i 10 znaków oraz chroni wypełnione pola checkoutu przed wyczyszczeniem przez frontend.
 
 ## Testowanie ręczne
 
@@ -96,8 +124,11 @@ Minimalna lista kontroli przed wydaniem:
 4. Złóż zamówienie z poprawnym NIP bez nazwy firmy - checkout powinien pokazać błąd firmy.
 5. Złóż zamówienie z błędnym NIP - checkout powinien pokazać błąd NIP.
 6. Sprawdź, czy NIP jest widoczny w panelu zamówienia.
-7. Sprawdź, czy NIP jest widoczny w mailu WooCommerce.
-8. Sprawdź checkout z włączonym HPOS.
+7. Sprawdź, czy NIP jest widoczny na stronie `order-received`.
+8. Sprawdź, czy NIP jest widoczny w szczegółach zamówienia w koncie klienta.
+9. Sprawdź, czy NIP jest widoczny w mailu WooCommerce.
+10. Zapisz NIP w adresie rozliczeniowym konta i sprawdź, czy podpowiada się w checkoutcie.
+11. Sprawdź checkout z włączonym HPOS.
 
 Przykładowy poprawny NIP testowy:
 
