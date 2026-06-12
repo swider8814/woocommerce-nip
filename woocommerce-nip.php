@@ -4,7 +4,7 @@
  * Author: Daniel Świderski
  * Author URI: https://8814.pl
  * Description: Adds an optional Polish NIP field to WooCommerce classic checkout.
- * Version: 1.0.0
+ * Version: 1.0.1
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: woocommerce-nip-field
@@ -38,7 +38,9 @@ function woocommerce_nip_field_init() {
 	}
 
 	add_filter( 'woocommerce_checkout_fields', 'woocommerce_nip_add_checkout_field' );
+	add_filter( 'woocommerce_billing_fields', 'woocommerce_nip_add_billing_address_field' );
 	add_action( 'woocommerce_after_checkout_validation', 'woocommerce_nip_validate_checkout_field', 10, 2 );
+	add_action( 'woocommerce_after_save_address_validation', 'woocommerce_nip_validate_billing_address_field', 10, 3 );
 	add_action( 'woocommerce_checkout_create_order', 'woocommerce_nip_save_order_meta', 10, 2 );
 	add_action( 'woocommerce_admin_order_data_after_billing_address', 'woocommerce_nip_display_admin_order_meta' );
 	add_filter( 'woocommerce_email_order_meta_fields', 'woocommerce_nip_add_email_order_meta', 10, 3 );
@@ -90,6 +92,44 @@ function woocommerce_nip_add_checkout_field( $fields ) {
 }
 
 /**
+ * Adds the NIP field to customer billing address forms.
+ *
+ * @param array $fields Billing fields.
+ * @return array
+ */
+function woocommerce_nip_add_billing_address_field( $fields ) {
+	$nip_field = array(
+		'type'              => 'text',
+		'label'             => __( 'NIP', 'woocommerce-nip-field' ),
+		'required'          => false,
+		'priority'          => 31,
+		'class'             => array( 'form-row-wide' ),
+		'input_class'       => array( 'input-text' ),
+		'custom_attributes' => array(
+			'inputmode' => 'numeric',
+			'maxlength' => '10',
+			'pattern'   => '[0-9]*',
+		),
+	);
+
+	$billing_fields = array();
+
+	foreach ( $fields as $key => $field ) {
+		$billing_fields[ $key ] = $field;
+
+		if ( 'billing_company' === $key ) {
+			$billing_fields['billing_nip'] = $nip_field;
+		}
+	}
+
+	if ( ! isset( $billing_fields['billing_nip'] ) ) {
+		$billing_fields['billing_nip'] = $nip_field;
+	}
+
+	return $billing_fields;
+}
+
+/**
  * Validates NIP through WooCommerce's native checkout field validation flow.
  *
  * @param array    $data   Posted checkout data.
@@ -129,6 +169,35 @@ function woocommerce_nip_validate_checkout_field( $data, $errors ) {
 	}
 
 	woocommerce_nip_sort_checkout_errors( $errors );
+}
+
+/**
+ * Validates NIP when a customer saves the billing address in My Account.
+ *
+ * @param int    $user_id      User ID.
+ * @param string $load_address Address type.
+ * @param array  $address      Address fields.
+ */
+function woocommerce_nip_validate_billing_address_field( $user_id, $load_address, $address ) {
+	if ( 'billing' !== $load_address ) {
+		return;
+	}
+
+	$nip = isset( $_POST['billing_nip'] ) ? trim( wc_clean( wp_unslash( $_POST['billing_nip'] ) ) ) : '';
+
+	if ( '' === $nip ) {
+		return;
+	}
+
+	$company = isset( $_POST['billing_company'] ) ? trim( wc_clean( wp_unslash( $_POST['billing_company'] ) ) ) : '';
+
+	if ( '' === $company ) {
+		wc_add_notice( __( 'Nazwa firmy jest wymagana przy podaniu NIP.', 'woocommerce-nip-field' ), 'error' );
+	}
+
+	if ( ! woocommerce_nip_is_valid( $nip ) ) {
+		wc_add_notice( __( 'NIP nie jest prawidłowym numerem.', 'woocommerce-nip-field' ), 'error' );
+	}
 }
 
 /**
