@@ -4,7 +4,7 @@
  * Author: Daniel Świderski
  * Author URI: https://8814.pl
  * Description: Adds an optional Polish NIP field to WooCommerce classic checkout.
- * Version: 1.0.4
+ * Version: 1.0.5
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: woocommerce-nip-field
@@ -187,11 +187,11 @@ function woocommerce_nip_add_order_billing_address_nip( $address, $order ) {
  * Adds NIP to the final formatted billing address if it is not already there.
  *
  * @param string   $address     Formatted billing address.
- * @param WC_Order $order       Order object.
  * @param array    $raw_address Raw billing address data.
+ * @param WC_Order $order       Order object.
  * @return string
  */
-function woocommerce_nip_add_formatted_order_billing_address_nip( $address, $order, $raw_address ) {
+function woocommerce_nip_add_formatted_order_billing_address_nip( $address, $raw_address, $order ) {
 	$nip = $order->get_meta( '_billing_nip' );
 
 	if ( '' === $nip || false !== strpos( wp_strip_all_tags( $address ), $nip ) ) {
